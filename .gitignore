@@ -11,7 +11,7 @@ dist/
 build/
 lakehouse/
 sample_data/
-
+*.egg-info
 #archivos de configuracion
 
 # Ignorar archivos de sistema
