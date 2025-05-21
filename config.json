@@ -1,0 +1,71 @@
+{
+    "adls_config_base": {
+        "storage_account_name": "<TU_CUENTA_ALMACENAMIENTO>",
+        "container_landing": "<TU_CONTENEDOR_LANDING>",
+        "container_raw": "<TU_CONTENEDOR_RAW>",
+        "container_bronze": "<TU_CONTENEDOR_BRONZE>",
+        "container_archive": "<TU_CONTENEDOR_ARCHIVO>"
+    },
+    "local_env_config": {
+        "landing_base_path": "sample_data/landing/",
+        "raw_base_path": "lakehouse/raw/",
+        "bronze_base_path": "lakehouse/bronze/",
+        "archive_base_path": "sample_data/archive/"
+    },
+    "databricks_env_config": {
+        "landing_base_relative_path": "project_farmia/landing/",
+        "raw_base_relative_path": "project_farmia/raw/",
+        "bronze_base_relative_path": "project_farmia/bronze/",
+        "archive_base_relative_path": "project_farmia/landing_archived/",
+        "autoloader_metadata_base_relative_path": "project_farmia/_autoloader_metadata/",
+        "bronze_autoloader_metadata_base_relative_path": "project_farmia/_bronze_autoloader_metadata/"
+    },
+    "datasets_to_ingest_to_raw": [
+        "sales_online_csv"
+    ],
+    "datasets_to_promote_to_bronze": [
+        "sales_online_csv"
+    ],
+    "dataset_configs": {
+        "sales_online_csv": {
+            "type": "csv",
+            "source_subpath": "sales_online/",
+            "raw_target_subpath": "sales_online_raw_parquet/",
+            "archive_subpath": "sales_online_archived/",
+            "schema_config": {
+                "fields": [
+                    {"name": "order_id", "type": "string"},
+                    {"name": "product_id", "type": "string"},
+                    {"name": "quantity", "type": "integer"},
+                    {"name": "price", "type": "double"},
+                    {"name": "customer_id", "type": "string"},
+                    {"name": "order_date", "type": "timestamp", "format": "yyyy-MM-dd HH:mm:ss"}
+                ]
+            },
+            "partition_config": {
+                "columns_to_partition_by": ["year", "month", "day"],
+                "derive_date_parts_from_column": "order_date"
+            },
+            "reader_options": { "header": "true", "delimiter": "," },
+            "autoloader_schema_evolution_mode": "addNewColumns",
+            "bronze_config": {
+                "enabled": true,
+                "raw_source_format": "parquet",
+                "bronze_target_subpath_delta": "sales_online_delta/",
+                "bronze_database_name": "farmia_bronze",
+                "bronze_table_name": "sales_online_orders",
+                "bronze_partition_columns_derivation": {
+                    "source_column": "order_date",
+                    "year_col_name": "event_year",
+                    "month_col_name": "event_month"
+                },
+                "partition_by_bronze": ["event_year", "event_month"],
+                "merge_schema_on_write": true,
+                "optimize_write": true,
+                "autoloader_for_raw_source": false,
+                "autoloader_raw_schema_evolution_mode": "addNewColumns",
+                "raw_reader_options": {}
+            }
+        }
+    }
+}
