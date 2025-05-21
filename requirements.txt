@@ -1,0 +1,19 @@
+# requirements.txt
+
+# --- Dependencias Principales para el Motor de Ingesta (Ejecución Local) ---
+
+# PySpark: Asegúrate de que la versión sea compatible con tu instalación de Spark 3.5.x
+# y tu Python (3.10-3.11). Especificar un rango puede ser útil.
+pyspark>=3.5.0,<3.6.0
+
+# Delta Lake: Para leer y escribir tablas Delta.
+# Alinea esta versión con DELTA_LAKE_VERSION en utils.py (ej. 3.1.0).
+delta-spark>=3.1.0,<3.2.0
+
+
+# --- Dependencias Opcionales (Solo si usas el script de generación de datos de muestra) ---
+# Descomenta las siguientes líneas si necesitas generar datos de muestra.
+#
+# avro-python3
+# pyarrow
+# Pillow
