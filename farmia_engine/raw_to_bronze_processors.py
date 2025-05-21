@@ -13,7 +13,7 @@ class RawDataReader:
         self.is_streaming = False
 
     def read(self):
-        bronze_cfg = self.dataset_cfg["bronze_config"] # Asumimos que bronze_config existe
+        bronze_cfg = self.dataset_cfg["bronze_config"]
         raw_format = bronze_cfg.get("raw_source_format", "parquet")
         reader_options = bronze_cfg.get("raw_reader_options", {})
         use_autoloader_for_raw = bronze_cfg.get("autoloader_for_raw_source", False)
@@ -30,8 +30,6 @@ class RawDataReader:
             autoloader_opts = {
                 "cloudFiles.format": raw_format,
                 "cloudFiles.schemaLocation": self.autoloader_raw_paths["autoloader_raw_schema_location"],
-                # Para Parquet en RAW, el esquema debería ser estable. "none" es estricto.
-                # "addNewColumns" fue solicitado, pero "none" o "rescue" son más comunes para Parquet.
                 "cloudFiles.schemaEvolutionMode": bronze_cfg.get("autoloader_raw_schema_evolution_mode", "addNewColumns"),
             }
             autoloader_opts.update(reader_options)
@@ -42,12 +40,12 @@ class RawDataReader:
             self.is_streaming = False
             if raw_format.lower() == "parquet":
                 df = self.spark.read.format("parquet").options(**reader_options).load(self.raw_source_path)
-            elif raw_format.lower() == "delta": # En caso de que la capa raw ya sea Delta
+            elif raw_format.lower() == "delta":
                  df = self.spark.read.format("delta").options(**reader_options).load(self.raw_source_path)
             else:
                 raise ValueError(f"Formato '{raw_format}' no soportado para lectura batch de capa RAW en este procesador.")
         
-        if df is None: # Chequeo por si la carga falla o devuelve None (aunque Spark suele devolver DF vacío)
+        if df is None:
              raise ValueError(f"No se pudieron leer datos de {self.raw_source_path} con formato {raw_format}")
         return df, self.is_streaming
 
@@ -73,47 +71,37 @@ class BronzeDeltaWriter:
         year_col_name_target = bronze_partition_derivation_cfg.get("year_col_name")
         month_col_name_target = bronze_partition_derivation_cfg.get("month_col_name")
         
-        # Imprimamos los valores exactos que se usarán en las condiciones
-        print(f"    DERIVACIÓN BRONZE (Check): source='{source_col_name}', year_target='{year_col_name_target}', month_target='{month_col_name_target}'")
-
         if isinstance(source_col_name, str) and source_col_name and source_col_name in df_input.columns:
-            current_df_state = df_with_derived_cols # Inicia con el DataFrame de entrada
+            current_df_state = df_with_derived_cols
             
             source_col_type = df_input.schema[source_col_name].dataType
             if not isinstance(source_col_type, (TimestampType, DateType)):
                 print(f"    INFO (DERIVACIÓN BRONZE): Convirtiendo columna '{source_col_name}' de {source_col_type} a TimestampType.")
                 current_df_state = current_df_state.withColumn(source_col_name, col(source_col_name).cast(TimestampType()))
             
-            # Bloque para 'event_year'
-            if isinstance(year_col_name_target, str) and year_col_name_target: # Condición A
+            if isinstance(year_col_name_target, str) and year_col_name_target:
                 print(f"    INFO (DERIVACIÓN BRONZE): Creando columna '{year_col_name_target}' desde '{source_col_name}'.")
                 current_df_state = current_df_state.withColumn(year_col_name_target, year(col(source_col_name)))
-            else:
-                print(f"    INFO (DERIVACIÓN BRONZE): NO se crea columna para AÑO. Target: '{year_col_name_target}', Tipo: {type(year_col_name_target)}")
-
-            # Bloque para 'event_month'
-            if isinstance(month_col_name_target, str) and month_col_name_target: # Condición B
+            
+            if isinstance(month_col_name_target, str) and month_col_name_target:
                 print(f"    INFO (DERIVACIÓN BRONZE): Creando columna '{month_col_name_target}' desde '{source_col_name}'.")
                 current_df_state = current_df_state.withColumn(month_col_name_target, month(col(source_col_name)))
-            else:
-                print(f"    INFO (DERIVACIÓN BRONZE): NO se crea columna para MES. Target: '{month_col_name_target}', Tipo: {type(month_col_name_target)}")
             
             df_with_derived_cols = current_df_state 
-        
-        elif source_col_name:
+        elif source_col_name: # source_col_name se obtuvo de config pero no es válido o no está en el DF
              print(f"ADVERTENCIA (DERIVACIÓN BRONZE): Columna fuente '{source_col_name}' no es string válido o no fue encontrada en DataFrame. Columnas DF: {df_input.columns}")
-        else:
+        else: # source_col_name no se pudo obtener de la config
             print(f"    INFO (DERIVACIÓN BRONZE): 'source_column' no especificada o inválida en 'bronze_partition_columns_derivation'.")
         
         return df_with_derived_cols
 
     def _write_micro_batch_to_delta(self, batch_df, epoch_id):
         bronze_cfg = self.dataset_cfg["bronze_config"]
-        log_dataset_identifier = self.dataset_cfg.get('source_subpath', f'epoch_{epoch_id}')
+        log_dataset_identifier = self.dataset_cfg.get('source_subpath', f'epoch_{epoch_id}') 
         print(f"  BRONZE WRITER (foreachBatch - {log_dataset_identifier}): Procesando epoch_id {epoch_id} para Delta.")
 
         df_to_write = self._derive_bronze_partition_columns(batch_df, bronze_cfg.get("bronze_partition_columns_derivation"))
-        partition_cols_bronze = bronze_cfg.get("partition_by_bronze") # Lista de nombres de columnas finales
+        partition_cols_bronze = bronze_cfg.get("partition_by_bronze")
 
         writer = df_to_write.write.format("delta").mode("append")
         if bronze_cfg.get("merge_schema_on_write", True): writer = writer.option("mergeSchema", "true")
@@ -126,10 +114,8 @@ class BronzeDeltaWriter:
             writer = writer.partitionBy(*partition_cols_bronze)
         
         if self.entorno_actual == "databricks" and self.bronze_table_full_name:
-            # print(f"    Escribiendo micro-lote Delta en: {self.bronze_target_path} y tabla {self.bronze_table_full_name}")
             writer.option("path", self.bronze_target_path).saveAsTable(self.bronze_table_full_name)
         else:
-            # print(f"    Escribiendo micro-lote Delta en: {self.bronze_target_path}")
             writer.save(self.bronze_target_path)
 
     def write(self, df_input, is_streaming_source):
@@ -144,8 +130,6 @@ class BronzeDeltaWriter:
             if not self.bronze_stream_checkpoint_location:
                 raise ValueError("Checkpoint location para stream raw->bronze no proporcionado.")
             
-            # La derivación de columnas de partición se aplica dentro de _write_micro_batch_to_delta
-            # usando el batch_df, por lo que df_input (el stream) se pasa directamente.
             df_stream_to_write = df_input 
 
             query_name = f"promote_{self.dataset_cfg.get('source_subpath','unnamed_dataset').replace('/','_')}_to_bronze"
@@ -161,11 +145,9 @@ class BronzeDeltaWriter:
         
         else: # Escritura Batch a Delta
             df_final_derived = self._derive_bronze_partition_columns(df_input, bronze_cfg.get("bronze_partition_columns_derivation"))
-            print("DEBUG: Schema de df_final_derived ANTES de la validación de particiones (batch):") # <--- AÑADIR ESTO
-            df_final_derived.printSchema() # <--- AÑADIR ESTO
             partition_cols_bronze = bronze_cfg.get("partition_by_bronze")
             
-            writer = df_final_derived.write.format("delta").mode("append") # Mantener append como default para batch local (según tu última decisión)
+            writer = df_final_derived.write.format("delta").mode("append")
             if bronze_cfg.get("merge_schema_on_write", True): writer = writer.option("mergeSchema", "true")
             if bronze_cfg.get("optimize_write", False) and self.entorno_actual == "databricks": writer = writer.option("autoOptimize.optimizeWrite", "true")
             
@@ -173,14 +155,11 @@ class BronzeDeltaWriter:
                 for p_col in partition_cols_bronze:
                     if p_col not in df_final_derived.columns:
                         raise ValueError(f"Columna de partición Bronze '{p_col}' no encontrada en DataFrame (batch) TRAS DERIVACIÓN. Columnas: {df_final_derived.columns}")
-                # print(f"    Particionando batch Delta por: {partition_cols_bronze}") # Reducir verbosidad
                 writer = writer.partitionBy(*partition_cols_bronze)
             
             if self.entorno_actual == "databricks" and self.bronze_table_full_name:
-                # print(f"    Escribiendo batch Delta en: {self.bronze_target_path} y tabla {self.bronze_table_full_name}")
                 writer.option("path", self.bronze_target_path).saveAsTable(self.bronze_table_full_name)
             else:
-                # print(f"    Escribiendo batch Delta en: {self.bronze_target_path}")
                 writer.save(self.bronze_target_path)
 
         print(f"BRONZE WRITER: Escritura Delta completada para '{log_table_identifier}'.")
