@@ -57,14 +57,25 @@ class DatasetReader:
             if self.dataset_cfg.get("autoloader_infer_column_types"): # Nueva opción en config.json si se desea
                  autoloader_opts["cloudFiles.inferColumnTypes"] = "true"
 
+            # Si se proporciona un esquema y se quiere evolución, usar schemaHints
+            if spark_schema and autoloader_opts["cloudFiles.schemaEvolutionMode"] != "none":
+                # Construir la cadena de DDL para schemaHints
+                # Escapar nombres de columna con backticks si contienen caracteres especiales o son palabras clave
+                schema_hints_string = ", ".join([f"`{field.name}` {field.dataType.simpleString()}" for field in spark_schema.fields])
+                autoloader_opts["cloudFiles.schemaHints"] = schema_hints_string
+                print(f"    Aplicando SchemaHints: {schema_hints_string}")
+
             autoloader_opts.update(reader_options)
             
             if file_type == "csv" and "delimiter" in autoloader_opts and "sep" not in autoloader_opts:
                 autoloader_opts["sep"] = autoloader_opts.pop("delimiter")
             
             df_reader = self.spark.readStream.format("cloudFiles").options(**autoloader_opts)
-            if spark_schema: # Solo aplicar si spark_schema no es None
-                df_reader = df_reader.schema(spark_schema)
+            
+             # NO usar .schema(spark_schema) directamente si se usan schemaHints y schemaEvolutionMode="addNewColumns"
+            # if spark_schema and autoloader_opts["cloudFiles.schemaEvolutionMode"] == "none":
+            #    df_reader = df_reader.schema(spark_schema) # Solo si el modo es 'none' y se quiere un schema estricto
+
             df = df_reader.load(self.source_path)
         
         else: # Lectura Batch local (o para formatos no Autoloader en Databricks, o si Autoloader no está habilitado)
