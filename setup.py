@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="farmia_engine",
-    version="0.1.0",
+    version="0.1.1",
     author="Fernando Regodeceves",
     description="Motor de ingesta de datos para FarmIA",
     long_description="Un motor de ingesta de datos que procesa archivos y los mueve a través de las capas de un data lakehouse (landing, raw, bronze).",

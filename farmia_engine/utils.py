@@ -86,72 +86,140 @@ def get_spark_session(env_type=None, app_name="FarmIA_Ingestion_Framework"):
 
 def construct_full_paths_for_dataset(env_cfg_base, adls_base_cfg, dataset_cfg, dataset_name, entorno_actual):
     """
-    Construye todas las rutas necesarias (landing, raw, archive, bronze, metadata)
+    Construye todas las rutas necesarias (landing, raw, archive, bronze, metadata de Autoloader)
     para un dataset específico, adaptado al entorno.
-    env_cfg_base: Corresponde a local_env_config o databricks_env_config.
-    adls_base_cfg: Corresponde a adls_config_base (solo para Databricks).
-    dataset_cfg: Configuración específica del dataset (de dataset_configs[dataset_name]).
-    dataset_name: Nombre clave del dataset (ej. "sales_online_csv").
-    """
-    source_path, raw_target_path, archive_path, bronze_target_path = None, None, None, None
-    autoloader_landing_schema_loc, autoloader_landing_checkpoint_loc = None, None
-    autoloader_raw_schema_loc, autoloader_raw_checkpoint_loc = None, None
 
+    Args:
+        env_cfg_base (dict): Configuración base del entorno (local_env_config o databricks_env_config).
+        adls_base_cfg (dict): Configuración base de ADLS (adls_config_base), solo para Databricks.
+        dataset_cfg (dict): Configuración específica del dataset.
+        dataset_name (str): Nombre clave del dataset (ej. "sales_online_csv").
+        entorno_actual (str): "local" o "databricks".
+
+    Returns:
+        dict: Un diccionario con todas las rutas construidas.
+    """
+    paths = {
+        "source_path": None,
+        "raw_target_path": None,
+        "archive_path": None,
+        "bronze_target_path": None,
+        "autoloader_landing_schema_location": None,
+        "autoloader_landing_checkpoint_location": None,
+        "autoloader_raw_schema_location": None,
+        "autoloader_raw_checkpoint_location": None
+    }
+    
     clean_dataset_name_for_paths = dataset_name.replace("/", "_").replace("\\", "_")
 
     if entorno_actual == "databricks":
         if not adls_base_cfg:
             raise ValueError("adls_base_cfg es requerida para el entorno Databricks en la construcción de rutas.")
 
-        storage_account = adls_base_cfg["storage_account_name"]
-        container_landing = adls_base_cfg["container_landing"]
-        container_raw = adls_base_cfg["container_raw"]
-        container_bronze = adls_base_cfg.get("container_bronze", container_raw) 
-        container_archive = adls_base_cfg.get("container_archive", container_landing)
+        storage_account = adls_base_cfg.get("storage_account_name")
+        if not storage_account or storage_account == "<DEJAR_VACÍO_SI_SE_OBTIENE_DINÁMICAMENTE_O_TU_CUENTA_ADLS>": # Chequeo más explícito
+            raise ValueError("'storage_account_name' no está definido en adls_config_base o no se ha reemplazado el placeholder.")
 
-        landing_base_adls = f"abfss://{container_landing}@{storage_account}.dfs.core.windows.net/{env_cfg_base['landing_base_relative_path'].strip('/')}"
-        raw_base_adls = f"abfss://{container_raw}@{storage_account}.dfs.core.windows.net/{env_cfg_base['raw_base_relative_path'].strip('/')}"
-        bronze_base_adls = f"abfss://{container_bronze}@{storage_account}.dfs.core.windows.net/{env_cfg_base.get('bronze_base_relative_path','bronze/').strip('/')}"
-        archive_base_adls = f"abfss://{container_archive}@{storage_account}.dfs.core.windows.net/{env_cfg_base.get('archive_base_relative_path', 'landing_archived/').strip('/')}"
+        # Helper interno para construir rutas ADLS de forma consistente
+        def _build_adls_uri(container_name_key, base_relative_path_key, specific_subpath=""):
+            container_name = adls_base_cfg.get(container_name_key)
+            if not container_name:
+                raise ValueError(f"La clave del contenedor '{container_name_key}' no se encuentra en 'adls_config_base'.")
+            
+            base_uri_for_container = f"abfss://{container_name}@{storage_account}.dfs.core.windows.net"
+            
+            relative_parts = []
+            # Añadir la ruta base relativa del entorno si está definida y no es vacía
+            base_relative_from_env = env_cfg_base.get(base_relative_path_key, "")
+            if base_relative_from_env and base_relative_from_env.strip('/'):
+                relative_parts.append(base_relative_from_env.strip('/'))
+            
+            # Añadir la subruta específica del dataset si está definida y no es vacía
+            if specific_subpath and specific_subpath.strip('/'):
+                relative_parts.append(specific_subpath.strip('/'))
+            
+            full_relative_path = "/".join(relative_parts)
+            
+            # Construir la ruta final
+            # Si full_relative_path está vacío, la ruta es solo el contenedor base_uri + '/'
+            # Si no, es base_uri + '/' + full_relative_path + '/'
+            final_path = base_uri_for_container
+            if full_relative_path:
+                final_path += f"/{full_relative_path}"
+            
+            # Asegurar que las rutas de directorio terminen con '/'
+            if not final_path.endswith('/'):
+                final_path += "/"
+            return final_path
+
+        paths["source_path"] = _build_adls_uri("container_landing", "landing_base_relative_path", dataset_cfg["source_subpath"])
+        paths["raw_target_path"] = _build_adls_uri("container_raw", "raw_base_relative_path", dataset_cfg["raw_target_subpath"])
+        paths["archive_path"] = _build_adls_uri("container_archive", "archive_base_relative_path", dataset_cfg.get("archive_subpath", clean_dataset_name_for_paths))
         
         # Rutas de metadatos de Autoloader para landing->raw
-        autoloader_landing_meta_base = f"abfss://{container_raw}@{storage_account}.dfs.core.windows.net/{env_cfg_base.get('autoloader_metadata_base_relative_path','_autoloader_metadata/').strip('/')}"
-        autoloader_landing_schema_loc = os.path.join(autoloader_landing_meta_base, clean_dataset_name_for_paths, "landing_schema").replace("\\","/")
-        autoloader_landing_checkpoint_loc = os.path.join(autoloader_landing_meta_base, clean_dataset_name_for_paths, "landing_checkpoint").replace("\\","/")
+        # Estas usan un contenedor específico para metadatos y sus propias rutas base relativas.
+        autoloader_metadata_container = adls_base_cfg.get("container_autoloader_metadata", adls_base_cfg["container_raw"]) # Default a container_raw si no se define
+        
+        # Construcción explícita para metadatos para mayor claridad
+        base_uri_autoloader_landing = f"abfss://{autoloader_metadata_container}@{storage_account}.dfs.core.windows.net"
+        autoloader_landing_meta_base_rel = env_cfg_base.get('autoloader_metadata_base_relative_path','_autoloader_metadata/landing_to_raw').strip('/')
+        
+        path_parts_landing_schema = [base_uri_autoloader_landing.rstrip('/')]
+        if autoloader_landing_meta_base_rel: path_parts_landing_schema.append(autoloader_landing_meta_base_rel)
+        path_parts_landing_schema.extend([clean_dataset_name_for_paths, "landing_schema"])
+        paths["autoloader_landing_schema_location"] = "/".join(path_parts_landing_schema) + "/"
+        
+        path_parts_landing_checkpoint = [base_uri_autoloader_landing.rstrip('/')]
+        if autoloader_landing_meta_base_rel: path_parts_landing_checkpoint.append(autoloader_landing_meta_base_rel)
+        path_parts_landing_checkpoint.extend([clean_dataset_name_for_paths, "landing_checkpoint"])
+        paths["autoloader_landing_checkpoint_location"] = "/".join(path_parts_landing_checkpoint) + "/"
 
-        # Rutas de metadatos de Autoloader para raw->bronze (si se usa Autoloader para leer raw)
-        autoloader_raw_meta_base = f"abfss://{container_bronze}@{storage_account}.dfs.core.windows.net/{env_cfg_base.get('bronze_autoloader_metadata_base_relative_path','_bronze_autoloader_metadata/').strip('/')}"
-        autoloader_raw_schema_loc = os.path.join(autoloader_raw_meta_base, clean_dataset_name_for_paths, "raw_schema").replace("\\","/")
-        autoloader_raw_checkpoint_loc = os.path.join(autoloader_raw_meta_base, clean_dataset_name_for_paths, "raw_checkpoint").replace("\\","/")
-        
-        source_path = os.path.join(landing_base_adls, dataset_cfg["source_subpath"]).replace("\\","/")
-        raw_target_path = os.path.join(raw_base_adls, dataset_cfg["raw_target_subpath"]).replace("\\","/")
-        archive_path = os.path.join(archive_base_adls, dataset_cfg.get("archive_subpath", clean_dataset_name_for_paths)).replace("\\","/")
-        
-        if dataset_cfg.get("bronze_config"):
-            bronze_target_path = os.path.join(bronze_base_adls, dataset_cfg["bronze_config"]["bronze_target_subpath_delta"]).replace("\\","/")
+        bronze_cfg = dataset_cfg.get("bronze_config")
+        if bronze_cfg:
+            paths["bronze_target_path"] = _build_adls_uri("container_bronze", "bronze_base_relative_path", bronze_cfg["bronze_target_subpath_delta"])
+            
+            if bronze_cfg.get("autoloader_for_raw_source", False):
+                bronze_autoloader_meta_base_rel = env_cfg_base.get('bronze_autoloader_metadata_base_relative_path','_autoloader_metadata/raw_to_bronze').strip('/')
+                base_uri_autoloader_raw = f"abfss://{autoloader_metadata_container}@{storage_account}.dfs.core.windows.net" # Mismo contenedor de metadatos
+
+                path_parts_raw_schema = [base_uri_autoloader_raw.rstrip('/')]
+                if bronze_autoloader_meta_base_rel: path_parts_raw_schema.append(bronze_autoloader_meta_base_rel)
+                path_parts_raw_schema.extend([clean_dataset_name_for_paths, "raw_schema"])
+                paths["autoloader_raw_schema_location"] = "/".join(path_parts_raw_schema) + "/"
+
+                path_parts_raw_checkpoint = [base_uri_autoloader_raw.rstrip('/')]
+                if bronze_autoloader_meta_base_rel: path_parts_raw_checkpoint.append(bronze_autoloader_meta_base_rel)
+                path_parts_raw_checkpoint.extend([clean_dataset_name_for_paths, "raw_checkpoint"])
+                paths["autoloader_raw_checkpoint_location"] = "/".join(path_parts_raw_checkpoint) + "/"
 
     elif entorno_actual == "local":
-        source_path = os.path.join(env_cfg_base["landing_base_path"], dataset_cfg["source_subpath"])
-        raw_target_path = os.path.join(env_cfg_base["raw_base_path"], dataset_cfg["raw_target_subpath"])
-        archive_path = os.path.join(env_cfg_base["archive_base_path"], dataset_cfg.get("archive_subpath", clean_dataset_name_for_paths))
+        # Para local, las rutas base ya son el "contenedor" en sí.
+        paths["source_path"] = os.path.join(env_cfg_base["landing_base_path"], dataset_cfg["source_subpath"])
+        paths["raw_target_path"] = os.path.join(env_cfg_base["raw_base_path"], dataset_cfg["raw_target_subpath"])
+        paths["archive_path"] = os.path.join(env_cfg_base["archive_base_path"], dataset_cfg.get("archive_subpath", clean_dataset_name_for_paths))
         
-        if dataset_cfg.get("bronze_config"):
-            bronze_target_path = os.path.join(env_cfg_base.get("bronze_base_path","lakehouse/bronze/"), dataset_cfg["bronze_config"]["bronze_target_subpath_delta"])
-            # Rutas para Autoloader leyendo raw local (generalmente no se usa Autoloader localmente así)
-            autoloader_raw_schema_loc = os.path.join(env_cfg_base.get("bronze_base_path","lakehouse/bronze/"), "_autoloader_metadata_raw", clean_dataset_name_for_paths, "schema")
-            autoloader_raw_checkpoint_loc = os.path.join(env_cfg_base.get("bronze_base_path","lakehouse/bronze/"), "_autoloader_metadata_raw", clean_dataset_name_for_paths, "checkpoint")
-    
-    return {
-        "source_path": source_path,
-        "raw_target_path": raw_target_path,
-        "archive_path": archive_path,
-        "bronze_target_path": bronze_target_path,
-        "autoloader_landing_schema_location": autoloader_landing_schema_loc,
-        "autoloader_landing_checkpoint_location": autoloader_landing_checkpoint_loc,
-        "autoloader_raw_schema_location": autoloader_raw_schema_loc,
-        "autoloader_raw_checkpoint_location": autoloader_raw_checkpoint_loc
-    }
+        bronze_cfg = dataset_cfg.get("bronze_config")
+        if bronze_cfg:
+            paths["bronze_target_path"] = os.path.join(env_cfg_base.get("bronze_base_path","lakehouse/bronze/"), bronze_cfg["bronze_target_subpath_delta"])
+            
+            # Rutas para Autoloader leyendo raw local (si se implementara, menos común)
+            if bronze_cfg.get("autoloader_for_raw_source", False):
+                local_autoloader_raw_meta_base = os.path.join(env_cfg_base.get("bronze_base_path","lakehouse/bronze/"), "_autoloader_metadata_raw")
+                paths["autoloader_raw_schema_location"] = os.path.join(local_autoloader_raw_meta_base, clean_dataset_name_for_paths, "schema/")
+                paths["autoloader_raw_checkpoint_location"] = os.path.join(local_autoloader_raw_meta_base, clean_dataset_name_for_paths, "checkpoint/")
+                # Asegurar que las rutas locales terminen con separador si son directorios (os.path.join lo maneja bien)
+                # Para consistencia con ADLS, se puede añadir un os.sep al final si no está.
+                for key in ["autoloader_raw_schema_location", "autoloader_raw_checkpoint_location"]:
+                    if paths[key] and not paths[key].endswith(os.sep): paths[key] += os.sep
+
+    # Asegurar que todas las rutas de directorios (no archivos) terminen con separador
+    # Esto es más para consistencia visual y algunas APIs que lo esperan.
+    # Para ADLS, ya se maneja en _build_adls_uri. Para local, os.path.join es robusto.
+    # Por simplicidad, se omitirá forzar la barra al final para rutas locales aquí,
+    # ya que os.path.join las construye correctamente para las operaciones de E/S.
+    # Si una API específica lo requiere, se puede ajustar.
+
+    return paths
 
 def load_app_config(env_type, config_path_override=None):
     """Carga el archivo de configuración principal."""

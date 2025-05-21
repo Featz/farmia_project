@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: farmia_engine
-Version: 0.1.0
+Version: 0.1.1
 Summary: Motor de ingesta de datos para FarmIA
 Author: Fernando Regodeceves
 Classifier: Programming Language :: Python :: 3
