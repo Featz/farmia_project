@@ -1,0 +1,17 @@
+# Ignorar archivos temporales
+*.log
+*.tmp
+
+# Ignorar carpetas de entorno y dependencias
+node_modules/
+.env
+__pycache__/
+.vscode/
+dist/
+build/
+lakehouse/
+sample_data/
+
+# Ignorar archivos de sistema
+.DS_Store
+Thumbs.db
