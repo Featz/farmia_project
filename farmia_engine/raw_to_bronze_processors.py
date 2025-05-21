@@ -70,30 +70,40 @@ class BronzeDeltaWriter:
             return df_with_derived_cols
 
         source_col_name = bronze_partition_derivation_cfg.get("source_column")
-        year_col_name_target = bronze_partition_derivation_cfg.get("year_column_name")
-        month_col_name_target = bronze_partition_derivation_cfg.get("month_column_name")
+        year_col_name_target = bronze_partition_derivation_cfg.get("year_col_name")
+        month_col_name_target = bronze_partition_derivation_cfg.get("month_col_name")
         
+        # Imprimamos los valores exactos que se usarán en las condiciones
+        print(f"    DERIVACIÓN BRONZE (Check): source='{source_col_name}', year_target='{year_col_name_target}', month_target='{month_col_name_target}'")
+
         if isinstance(source_col_name, str) and source_col_name and source_col_name in df_input.columns:
-            current_df_state = df_with_derived_cols 
+            current_df_state = df_with_derived_cols # Inicia con el DataFrame de entrada
             
             source_col_type = df_input.schema[source_col_name].dataType
             if not isinstance(source_col_type, (TimestampType, DateType)):
                 print(f"    INFO (DERIVACIÓN BRONZE): Convirtiendo columna '{source_col_name}' de {source_col_type} a TimestampType.")
                 current_df_state = current_df_state.withColumn(source_col_name, col(source_col_name).cast(TimestampType()))
             
-            if isinstance(year_col_name_target, str) and year_col_name_target:
+            # Bloque para 'event_year'
+            if isinstance(year_col_name_target, str) and year_col_name_target: # Condición A
                 print(f"    INFO (DERIVACIÓN BRONZE): Creando columna '{year_col_name_target}' desde '{source_col_name}'.")
                 current_df_state = current_df_state.withColumn(year_col_name_target, year(col(source_col_name)))
-            
-            if isinstance(month_col_name_target, str) and month_col_name_target:
+            else:
+                print(f"    INFO (DERIVACIÓN BRONZE): NO se crea columna para AÑO. Target: '{year_col_name_target}', Tipo: {type(year_col_name_target)}")
+
+            # Bloque para 'event_month'
+            if isinstance(month_col_name_target, str) and month_col_name_target: # Condición B
                 print(f"    INFO (DERIVACIÓN BRONZE): Creando columna '{month_col_name_target}' desde '{source_col_name}'.")
                 current_df_state = current_df_state.withColumn(month_col_name_target, month(col(source_col_name)))
+            else:
+                print(f"    INFO (DERIVACIÓN BRONZE): NO se crea columna para MES. Target: '{month_col_name_target}', Tipo: {type(month_col_name_target)}")
             
             df_with_derived_cols = current_df_state 
+        
         elif source_col_name:
-             print(f"ADVERTENCIA (DERIVACIÓN BRONZE): Columna fuente '{source_col_name}' no es string válido o no fue encontrada en DataFrame. No se derivarán columnas. Columnas DF: {df_input.columns}")
+             print(f"ADVERTENCIA (DERIVACIÓN BRONZE): Columna fuente '{source_col_name}' no es string válido o no fue encontrada en DataFrame. Columnas DF: {df_input.columns}")
         else:
-            print(f"    INFO (DERIVACIÓN BRONZE): 'source_column' no especificada en 'bronze_partition_columns_derivation'. No se derivarán columnas.")
+            print(f"    INFO (DERIVACIÓN BRONZE): 'source_column' no especificada o inválida en 'bronze_partition_columns_derivation'.")
         
         return df_with_derived_cols
 
@@ -151,6 +161,8 @@ class BronzeDeltaWriter:
         
         else: # Escritura Batch a Delta
             df_final_derived = self._derive_bronze_partition_columns(df_input, bronze_cfg.get("bronze_partition_columns_derivation"))
+            print("DEBUG: Schema de df_final_derived ANTES de la validación de particiones (batch):") # <--- AÑADIR ESTO
+            df_final_derived.printSchema() # <--- AÑADIR ESTO
             partition_cols_bronze = bronze_cfg.get("partition_by_bronze")
             
             writer = df_final_derived.write.format("delta").mode("append") # Mantener append como default para batch local (según tu última decisión)
