@@ -1,6 +1,6 @@
 # landing_to_raw_processors.py
 from pyspark.sql.functions import current_timestamp, input_file_name
-import utils 
+from . import utils 
 
 class DatasetReader:
     def __init__(self, spark, source_path, dataset_cfg, entorno_actual, autoloader_specific_paths=None):

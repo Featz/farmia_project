@@ -11,7 +11,7 @@ setup(
     install_requires=[
         "pyspark>=3.5.0", 
     ],
-    python_requires='>=3.10, <=3.11', # Especifica versiones de Python compatibles
+    python_requires='>=3.10, <=3.11.11', # Especifica versiones de Python compatibles
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",

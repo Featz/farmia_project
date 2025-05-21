@@ -242,10 +242,15 @@ if __name__ == "__main__":
     # llamando a las funciones generate_...() individualmente.
     
     # Ejemplo: Generar solo archivos CSV e JSON para pruebas rápidas
-    # generate_sales_csv()
+    generate_sales_csv()
+    generate_sales_csv()
+
+    generate_sales_csv()
+
+
     # generate_inventory_json()
 
     # Para generar todos los tipos definidos:
-    create_sample_files_for_all_types()
+    # create_sample_files_for_all_types()
     
     print(f"\nINFO: Generación de datos de muestra completada. Revisa la carpeta '{BASE_LANDING_PATH}'.")

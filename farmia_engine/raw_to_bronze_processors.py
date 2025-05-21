@@ -1,7 +1,7 @@
 # raw_to_bronze_processors.py
 from pyspark.sql.functions import col, year, month, current_timestamp, input_file_name 
 from pyspark.sql.types import TimestampType, DateType 
-import utils 
+from . import utils 
 
 class RawDataReader:
     def __init__(self, spark, raw_source_path, dataset_cfg, entorno_actual, autoloader_raw_paths=None):

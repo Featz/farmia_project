@@ -12,6 +12,9 @@ build/
 lakehouse/
 sample_data/
 
+#archivos de configuracion
+farmia_ingest_config.json
+
 # Ignorar archivos de sistema
 .DS_Store
 Thumbs.db
