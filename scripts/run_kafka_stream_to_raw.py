@@ -20,7 +20,7 @@ if project_root not in sys.path:
 # --- Fin de la configuración de sys.path ---
 
 try:
-    from farmia_engine.main_orchestrators import execute_kafka_avro_payload_to_raw_files_stream
+    from farmia_engine.main_orchestrators import execute_kafka_avro_payload_to_raw_stream
     # utils y processors son usados internamente por main_orchestrators
 except ImportError as e:
     print(f"Error: No se pudo importar desde 'farmia_engine'. Asegúrate de que:")
@@ -62,7 +62,7 @@ def start_local_kafka_to_raw_stream():
         # Si quisiéramos controlarlo aquí, necesitaríamos que devuelva las queries.
         # Por ahora, confiamos en la lógica de main_orchestrators.
         
-        execute_kafka_avro_payload_to_raw_files_stream(config_path_override=None)
+        execute_kafka_avro_payload_to_raw_stream(config_path_override=None)
         
         # Para un script de ejecución local que debe mantenerse vivo para el streaming:
         print("\nINFO: El stream (o streams) de Kafka a Raw se ha iniciado.")

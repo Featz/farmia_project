@@ -1,13 +1,11 @@
 # farmia_engine/main_orchestrators.py
 import os
 import traceback
-
-# Usar importaciones relativas ya que estos módulos están en el mismo paquete
 from . import utils 
 from . import landing_to_raw_processors as ltr_processors
 from . import raw_to_bronze_processors as rtb_processors
-# Importar el nuevo módulo de procesadores de streaming
-from . import streaming_to_raw_processors as str_processors # Asumiendo que lo llamaste así
+from . import streaming_to_raw_processors as str_processors #
+
 
 def execute_landing_to_raw(config_path_override=None):
     """
@@ -220,103 +218,77 @@ def dataset_name_key_in_streaming_raw_to_bronze(config_general, nombre_dataset_k
     return nombre_dataset_key in datasets_streaming_r_to_b
 
 
-# NUEVA FUNCIÓN ORQUESTADORA PARA KAFKA -> RAW (Archivos Avro)
-def execute_kafka_avro_payload_to_raw_files_stream(config_path_override=None):
-    """
-    Orquesta la ingesta de datos en streaming desde Kafka (payload Avro)
-    a la capa Raw como archivos Avro.
-    """
-    entorno_actual = "local" # Para este flujo, nos enfocamos en local según tu petición
+def execute_kafka_avro_payload_to_raw_stream(config_path_override=None): # Nombre de función actualizado
+    entorno_actual = "local"
     active_kafka_streams = []
-    print("INFO: Iniciando proceso Streaming Kafka (Avro Payload) -> Raw (Avro Files).")
+    print("INFO: Iniciando proceso Streaming Kafka (Avro Payload) -> Raw (Parquet Files).")
 
     try:
-        # Forzar entorno local para esta función específica según tu requerimiento
         entorno_actual = "local" 
         print(f"INFO: Ejecutando en modo '{entorno_actual}' forzado para Kafka.")
-        spark_session = utils.get_spark_session(entorno_actual, app_name="FarmIA_Stream_KafkaAvro_To_RawAvro")
-        
+        spark_session = utils.get_spark_session(entorno_actual, app_name="FarmIA_Stream_KafkaAvro_To_RawParquet")
         config_general = utils.load_app_config(entorno_actual, config_path_override=config_path_override)
-        
-        env_cfg_base = config_general.get("local_env_config") # Siempre local_env_config aquí
+        env_cfg_base = config_general.get("local_env_config")
         if not env_cfg_base: raise ValueError(f"Configuración 'local_env_config' no encontrada.")
         
-        # Usamos la lista active_streaming_pipelines o datasets_to_stream_kafka_to_raw de config
-        datasets_a_streamear = config_general.get("datasets_to_stream_kafka_to_raw", [])
+        datasets_a_streamear = config_general.get("active_streaming_pipelines", [])
 
         for nombre_dataset_key in datasets_a_streamear:
             dataset_cfg = config_general.get("dataset_configs", {}).get(nombre_dataset_key)
             
-            if not dataset_cfg or dataset_cfg.get("type") != "kafka_avro_payload_to_raw_avro_files":
-                # Omitir si no es el tipo correcto para este orquestador
+            # Actualizar el tipo esperado
+            if not dataset_cfg or dataset_cfg.get("type") != "kafka_avro_payload_to_raw_parquet_files":
                 continue
 
-            print(f"--- Iniciando stream Kafka(Avro Payload)->Raw(Avro Files) para: {nombre_dataset_key} ---")
+            print(f"--- Iniciando stream Kafka(Avro Payload)->Raw(Parquet) para: {nombre_dataset_key} ---")
             
-            # Para local, adls_base_cfg es None
             all_paths = utils.construct_full_paths_for_dataset(
                 env_cfg_base, None, dataset_cfg, nombre_dataset_key, entorno_actual
             )
 
             kafka_opts = dataset_cfg.get("kafka_options")
             avro_schema_str = dataset_cfg.get("value_avro_schema_string")
-            # Usar la clave correcta para el path de destino de Avro files y su checkpoint
-            raw_avro_files_path = all_paths.get("raw_target_avro_files_path") 
-            raw_checkpoint = all_paths.get("raw_stream_checkpoint_path_avro_files")
+            # Usar las claves correctas para Parquet
+            raw_parquet_path = all_paths.get("raw_target_parquet_files_path") 
+            raw_checkpoint = all_paths.get("raw_stream_checkpoint_path_parquet_files") # Clave de checkpoint para este stream
             raw_partitions = dataset_cfg.get("raw_stream_partition_by")
 
-            if not all([kafka_opts, avro_schema_str, raw_avro_files_path, raw_checkpoint]):
+            if not all([kafka_opts, avro_schema_str, raw_parquet_path, raw_checkpoint]):
                 print(f"ERROR: Configuración incompleta para stream Kafka '{nombre_dataset_key}'. Omitiendo.")
-                print(f"  KafkaOpts: {bool(kafka_opts)}, AvroSchema: {bool(avro_schema_str)}, RawPath: {bool(raw_avro_files_path)}, Checkpoint: {bool(raw_checkpoint)}")
+                print(f"  KafkaOpts: {bool(kafka_opts)}, AvroSchema: {bool(avro_schema_str)}, RawPath: {bool(raw_parquet_path)}, Checkpoint: {bool(raw_checkpoint)}")
                 continue
             
             # os.makedirs para el checkpoint ya se hace en utils.construct_full_paths_for_dataset para local
 
-            query = str_processors.process_kafka_avro_payload_to_raw_avro_files(
-                spark_session, kafka_opts, avro_schema_str, raw_avro_files_path, raw_checkpoint, raw_partitions
+            # Llamar a la función renombrada del procesador
+            query = str_processors.process_kafka_avro_payload_to_raw_parquet_files(
+                spark_session, kafka_opts, avro_schema_str, raw_parquet_path, raw_checkpoint, raw_partitions
             )
             if query:
                 active_kafka_streams.append(query)
         
         if active_kafka_streams:
-            print(f"\nINFO: {len(active_kafka_streams)} stream(s) Kafka(Avro Payload)->Raw(Avro Files) iniciados.")
+            print(f"\nINFO: {len(active_kafka_streams)} stream(s) Kafka(Avro Payload)->Raw(Parquet Files) iniciados.")
             print("      Los streams se ejecutarán hasta que se detenga el script (Ctrl+C) o la sesión de Spark.")
-            for q in active_kafka_streams: # Esperar a que todos terminen
+            for q_main in active_kafka_streams: 
                 try:
-                    q.awaitTermination() # Esto es bloqueante
-                except Exception as e_await: # Capturar StreamingQueryException, etc.
-                    print(f"ERROR: Stream '{q.name if q.name else q.id}' terminado con error: {e_await}")
+                    q_main.awaitTermination() 
+                except Exception as e_await_main: 
+                    print(f"ERROR: Stream '{q_main.name if q_main.name else q_main.id}' terminado con error: {e_await_main}")
                     traceback.print_exc()
         else:
-            print("INFO: No se iniciaron streams activos para Kafka(Avro Payload)->Raw(Avro Files).")
+            print("INFO: No se iniciaron streams activos para Kafka(Avro Payload)->Raw(Parquet Files).")
 
-    except Exception as e_main:
-        print(f"ERROR CRÍTICO en ejecución principal del stream Kafka(Avro Payload)->Raw(Avro Files): {e_main}")
+    except Exception as e_main_stream:
+        print(f"ERROR CRÍTICO en ejecución principal del stream Kafka(Avro Payload)->Raw(Parquet Files): {e_main_stream}")
         traceback.print_exc()
     finally:
-        # Para streams continuos, no siempre querrás detener Spark aquí.
-        # Pero si todos los streams usan trigger(availableNow=True), se detendrán solos.
-        # O si el usuario detiene con Ctrl+C, este finally se ejecutará.
         spark_to_stop = utils._spark_session_global 
         if entorno_actual == "local" and spark_to_stop is not None:
             print("Deteniendo SparkSession local (Kafka Stream Orchestrator).")
-            # Antes de detener, asegurar que los streams estén parados si es posible/deseado
-            for q_stop in active_kafka_streams:
-                if q_stop.isActive:
-                    print(f"  Deteniendo stream query {q_stop.id}...")
-                    try:
-                        q_stop.stop()
-                    except: pass # Ignorar errores al detener
+            for q_stop_main in active_kafka_streams:
+                if q_stop_main.isActive:
+                    try: q_stop_main.stop()
+                    except: pass 
             spark_to_stop.stop()
             utils._spark_session_global = None
-
-# Opcional: Bloque para ejecución directa si es útil para probar este orquestador
-# if __name__ == "__main__":
-#     # Para ejecutar el nuevo stream:
-#     execute_kafka_avro_payload_to_raw_files_stream()
-
-#     # Para ejecutar los anteriores (comentar el de arriba si solo quieres estos):
-#     # print("INFO: Ejecutando orquestador de Landing a Raw...")
-#     # execute_landing_to_raw()
-#     # print("\nINFO: Ejecutando orquestador de Raw a Bronze...")
-#     # execute_raw_to_bronze()
