@@ -66,9 +66,6 @@ def start_local_kafka_to_raw_stream():
         
         # Para un script de ejecución local que debe mantenerse vivo para el streaming:
         print("\nINFO: El stream (o streams) de Kafka a Raw se ha iniciado.")
-        print("      El proceso principal podría finalizar si los streams se ejecutan en segundo plano y no hay awaitTermination.")
-        print("      Si quieres que este script espere, considera añadir spark.streams.awaitAnyTermination() aquí")
-        print("      o una lógica de time.sleep() para permitir que el stream procese por un tiempo.")
         
    
 

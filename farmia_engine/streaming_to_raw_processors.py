@@ -79,7 +79,7 @@ def process_kafka_avro_payload_to_raw_avro_files(
             # Aquí podrías añadir lógica para otras columnas de partición si necesitan derivarse
 
         query_writer = final_df.writeStream \
-            .format("avro") 
+            .format("avro") \
             .outputMode("append") \
             .option("checkpointLocation", raw_stream_checkpoint_path)
         
