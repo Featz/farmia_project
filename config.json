@@ -5,22 +5,22 @@
         "container_raw": "<TU_CONTENEDOR_RAW>",
         "container_bronze": "<TU_CONTENEDOR_BRONZE>",
         "container_archive": "<TU_CONTENEDOR_ARCHIVO>",
-        "container_autoloader_metadata": "<TU_CONTENEDOR_METADATOS>"
+        "container_autoloader_metadata": "<TU_CONTENEDOR_METADATOS>" 
     },
     "local_env_config": {
         "landing_base_path": "sample_data/landing/",
         "raw_base_path": "lakehouse/raw/",
         "bronze_base_path": "lakehouse/bronze/",
         "archive_base_path": "sample_data/archive/",
-        "streaming_checkpoint_base_path": "lakehouse/checkpoints/"
+        "streaming_checkpoint_base_path": "lakehouse/checkpoints/" 
     },
     "databricks_env_config": {
-        "landing_base_relative_path": "",
+        "landing_base_relative_path": "", 
         "raw_base_relative_path": "raw/",
         "bronze_base_relative_path": "bronze/",
-        "archive_base_relative_path": "archived/",
-        "autoloader_metadata_base_relative_path": "_autoloader_metadata/landing_to_raw",
-        "streaming_checkpoints_base_relative_path": "_streaming_checkpoints/"
+        "archive_base_relative_path": "archived/", 
+        "autoloader_metadata_base_relative_path": "_autoloader_metadata/landing_to_raw", 
+        "streaming_checkpoints_base_relative_path": "_streaming_checkpoints/" 
     },
     "datasets_to_ingest_to_raw": [
         "sales_online_csv"
@@ -58,7 +58,7 @@
             "autoloader_schema_evolution_mode": "addNewColumns",
             "bronze_config": {
                 "enabled": true,
-                "raw_source_format": "parquet",
+                "raw_source_format": "parquet", 
                 "bronze_target_subpath_delta": "sales_online_delta/",
                 "bronze_database_name": "farmia_bronze",
                 "bronze_table_name": "sales_online_orders",
@@ -71,29 +71,31 @@
                 "merge_schema_on_write": true,
                 "overwrite_schema_on_write": true, 
                 "optimize_write": true,
-                "autoloader_for_raw_source": false,
-                "autoloader_raw_schema_evolution_mode": "addNewColumns",
+                "autoloader_for_raw_source": false, 
+                "autoloader_raw_schema_evolution_mode": "addNewColumns", 
                 "raw_reader_options": {}
             }
         },
         "sensor_telemetry_kafka": {
-            "type": "kafka_stream_to_raw",
+            "type": "kafka_avro_payload_to_raw_avro_files", 
             "kafka_options": {
-                "kafka.bootstrap.servers": "localhost:9092",
+                "kafka.bootstrap.servers": "127.0.0.1:9092,127.0.0.1:9093,127.0.0.1:9094", 
                 "subscribe": "sensor-telemetry",
                 "startingOffsets": "earliest",
                 "failOnDataLoss": "false" 
             },
-            "raw_target_delta_subpath": "iot_sensors/telemetry_raw_delta/",
-            "raw_stream_checkpoint_subpath": "iot_sensors_telemetry_kafka_to_raw_checkpoint/",
+            "value_avro_schema_string": "{\"name\":\"SensorTelemetry\",\"type\":\"record\",\"namespace\":\"com.farmia.iot.telemetry\",\"fields\":[{\"name\":\"sensor_id\",\"type\":{\"type\":\"string\",\"arg.properties\":{\"regex\":\"sensor_[0-9]{3}\"}}},{\"name\":\"timestamp\",\"type\":{\"type\":\"long\",\"logicalType\":\"timestamp-millis\"}},{\"name\":\"temperature\",\"type\":{\"type\":\"float\",\"arg.properties\":{\"range\":{\"min\":-10.0,\"max\":50.0}}}},{\"name\":\"humidity\",\"type\":{\"type\":\"float\",\"arg.properties\":{\"range\":{\"min\":0.0,\"max\":100.0}}}},{\"name\":\"soil_fertility\",\"type\":{\"type\":\"float\",\"arg.properties\":{\"range\":{\"min\":0.0,\"max\":100.0}}}}]}",
+            "raw_target_avro_files_subpath": "iot_sensors/telemetry_raw_avro_files/", 
+            "raw_stream_checkpoint_subpath": "sensor_telemetry_kafka_to_raw_avro_files_checkpoint/", 
             "raw_stream_partition_by": ["ingestion_date", "kafka_topic"],
+            
             "bronze_config": {
                 "enabled": true, 
-                "raw_source_format": "delta", 
+                "raw_source_format": "avro", 
                 "bronze_target_subpath_delta": "iot_sensors/telemetry_bronze_delta/",
                 "bronze_database_name": "farmia_bronze",
                 "bronze_table_name": "sensor_telemetry",
-                "avro_schema_string_for_value": "{\"name\":\"SensorTelemetry\",\"type\":\"record\",\"fields\":[{\"name\":\"sensor_id\",\"type\":{\"type\":\"string\",\"arg.properties\":{\"regex\":\"sensor_[0-9]{3}\"}}},{\"name\":\"timestamp\",\"type\":{\"type\":\"long\",\"logicalType\":\"timestamp-millis\"}},{\"name\":\"temperature\",\"type\":{\"type\":\"float\",\"arg.properties\":{\"range\":{\"min\":-10.0,\"max\":50.0}}}},{\"name\":\"humidity\",\"type\":{\"type\":\"float\",\"arg.properties\":{\"range\":{\"min\":0.0,\"max\":100.0}}}},{\"name\":\"soil_fertility\",\"type\":{\"type\":\"float\",\"arg.properties\":{\"range\":{\"min\":0.0,\"max\":100.0}}}}]}",
+                "value_avro_schema_string_for_raw_source": "{\"name\":\"SensorTelemetry\",\"type\":\"record\",\"namespace\":\"com.farmia.iot.telemetry\",\"fields\":[{\"name\":\"sensor_id\",\"type\":{\"type\":\"string\",\"arg.properties\":{\"regex\":\"sensor_[0-9]{3}\"}}},{\"name\":\"timestamp\",\"type\":{\"type\":\"long\",\"logicalType\":\"timestamp-millis\"}},{\"name\":\"temperature\",\"type\":{\"type\":\"float\",\"arg.properties\":{\"range\":{\"min\":-10.0,\"max\":50.0}}}},{\"name\":\"humidity\",\"type\":{\"type\":\"float\",\"arg.properties\":{\"range\":{\"min\":0.0,\"max\":100.0}}}},{\"name\":\"soil_fertility\",\"type\":{\"type\":\"float\",\"arg.properties\":{\"range\":{\"min\":0.0,\"max\":100.0}}}}]}",
                 "bronze_partition_columns_derivation": { 
                     "source_column": "timestamp", 
                     "year_col_name": "event_year",
@@ -103,7 +105,7 @@
                 "merge_schema_on_write": true,
                 "autoloader_for_raw_source": true, 
                 "autoloader_raw_schema_evolution_mode": "addNewColumns", 
-                "bronze_stream_checkpoint_subpath": "iot_sensors_telemetry_raw_to_bronze_checkpoint/"
+                "bronze_stream_checkpoint_subpath": "sensor_telemetry_raw_avro_to_bronze_delta_checkpoint/"
             }
         }
     }
