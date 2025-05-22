@@ -12,27 +12,17 @@ from pyspark.sql.types import (
     DoubleType, TimestampType, DateType
 )
 
-# Variables globales a nivel de módulo para SparkSession y DBUtils
-# Se inicializan una vez por las funciones get_spark_session y _detectar_entorno.
-# Otros módulos (como main_orchestrators.py) accederán a estas a través de las funciones de utils.
 _spark_session_global = None
 _dbutils_global = None
 
-# Constantes para rutas de configuración
-LOCAL_CONFIG_FILE_PATH = "config.json" # Relativo al directorio de ejecución del script principal
-DATABRICKS_DBFS_CONFIG_PATH = "/dbfs/FileStore/configs/farmia_ingest_config.json" # Ruta para open() en Databricks
+LOCAL_CONFIG_FILE_PATH = "config.json"
+DATABRICKS_DBFS_CONFIG_PATH = "/dbfs/FileStore/configs/farmia_ingest_config.json"
 
-# Versiones de paquetes para Spark local
-DELTA_LAKE_VERSION = "3.1.0" # Compatible con Spark 3.5.x
-SPARK_VERSION_FOR_PACKAGES = "3.5.0" # Tu versión de Spark 3.5.x
+DELTA_LAKE_VERSION = "3.1.0" 
+SPARK_VERSION_FOR_PACKAGES = "3.5.0" 
 
 def _detectar_entorno():
-    """
-    Detecta si el script se ejecuta en un entorno Databricks o localmente.
-    Cachea la instancia de DBUtils si se encuentra.
-    """
     global _dbutils_global
-    # Usar un atributo de función para 'flag' de detección evita múltiples intentos.
     if hasattr(_detectar_entorno, 'detected_env'):
         return getattr(_detectar_entorno, 'detected_env')
 
@@ -44,28 +34,20 @@ def _detectar_entorno():
             return "local"
         _dbutils_global = DBUtils(active_session_for_dbutils)
         setattr(_detectar_entorno, 'detected_env', 'databricks')
-        # print("UTILS: Entorno Databricks detectado (DBUtils disponible).") # Opcional
         return "databricks"
     except (ImportError, AttributeError, TypeError, Exception):
         setattr(_detectar_entorno, 'detected_env', 'local')
-        # print("UTILS: Entorno local detectado (DBUtils no disponible).") # Opcional
         return "local"
 
 def get_spark_session(env_type=None, app_name="FarmIA_Ingestion_Framework"):
-    """
-    Obtiene o crea una SparkSession global (_spark_session_global), adaptada al entorno.
-    Si env_type no se proporciona, se detecta automáticamente.
-    """
-    global _spark_session_global # Necesario para modificar la variable global del módulo
+    global _spark_session_global
     if _spark_session_global is None:
         detected_env = env_type or _detectar_entorno()
         
         active_session = SparkSession.getActiveSession()
         if active_session:
             _spark_session_global = active_session
-            # print(f"UTILS: Usando SparkSession activa existente. AppName: {_spark_session_global.conf.get('spark.app.name')}")
         elif detected_env == "databricks":
-            # print(f"UTILS: Creando SparkSession para Databricks. AppName: {app_name}")
             _spark_session_global = SparkSession.builder.appName(app_name).getOrCreate()
         else: # Entorno local
             print(f"UTILS: Creando SparkSession para local con soporte Delta, Kafka, Avro. AppName: {app_name}")
@@ -87,7 +69,6 @@ def get_spark_session(env_type=None, app_name="FarmIA_Ingestion_Framework"):
     return _spark_session_global
 
 def _build_adls_uri(adls_base_cfg, env_cfg_base, container_name_key, base_relative_path_key, specific_subpath=""):
-    """Función auxiliar para construir una URI ADLS de forma consistente."""
     storage_account = adls_base_cfg.get("storage_account_name")
     if not storage_account or storage_account.startswith("<"):
         raise ValueError(f"'storage_account_name' no está definido correctamente en 'adls_config_base': '{storage_account}'")
@@ -112,20 +93,21 @@ def _build_adls_uri(adls_base_cfg, env_cfg_base, container_name_key, base_relati
     if full_relative_path:
         final_path += f"/{full_relative_path}"
     
-    # Asegurar que las rutas de directorio terminen con '/'
     if not final_path.endswith('/'):
         final_path += "/"
     return final_path
 
 def construct_full_paths_for_dataset(env_cfg_base, adls_base_cfg, dataset_cfg, dataset_name, entorno_actual):
-    paths = {key: None for key in [ # Inicializar todas las claves esperadas
+    paths = {key: None for key in [
         "source_path", "raw_target_path", "archive_path", "bronze_target_path",
         "autoloader_landing_schema_location", "autoloader_landing_checkpoint_location",
         "autoloader_raw_schema_location", "autoloader_raw_checkpoint_location",
-        "raw_target_delta_path", "raw_stream_checkpoint_path", # Para Kafka -> Raw Delta
-        "bronze_target_delta_path", "bronze_stream_checkpoint_path" # Para Raw -> Bronze Delta
+        "raw_target_delta_path", "raw_stream_checkpoint_path", 
+        "raw_target_avro_files_path", "raw_stream_checkpoint_path_avro_files",
+        "bronze_target_delta_path", "bronze_stream_checkpoint_path"
     ]}
     clean_dataset_name_for_paths = dataset_name.replace("/", "_").replace("\\", "_")
+    dataset_type = dataset_cfg.get("type", "")
 
     if entorno_actual == "databricks":
         if not adls_base_cfg: raise ValueError("adls_base_cfg es requerida para Databricks.")
@@ -134,7 +116,7 @@ def construct_full_paths_for_dataset(env_cfg_base, adls_base_cfg, dataset_cfg, d
         paths["raw_target_path"] = _build_adls_uri(adls_base_cfg, env_cfg_base, "container_raw", "raw_base_relative_path", dataset_cfg.get("raw_target_subpath",""))
         paths["archive_path"] = _build_adls_uri(adls_base_cfg, env_cfg_base, "container_archive", "archive_base_relative_path", dataset_cfg.get("archive_subpath", clean_dataset_name_for_paths))
         
-        autoloader_meta_container = adls_base_cfg.get("container_autoloader_metadata", adls_base_cfg["container_raw"])
+        autoloader_meta_container = adls_base_cfg.get("container_autoloader_metadata", adls_base_cfg.get("container_raw"))
         
         landing_autoloader_base_rel = env_cfg_base.get('autoloader_metadata_base_relative_path','_autoloader_metadata/landing_to_raw')
         paths["autoloader_landing_schema_location"] = _build_adls_uri(adls_base_cfg, env_cfg_base, autoloader_meta_container, landing_autoloader_base_rel, f"{clean_dataset_name_for_paths}/landing_schema")
@@ -143,16 +125,24 @@ def construct_full_paths_for_dataset(env_cfg_base, adls_base_cfg, dataset_cfg, d
         bronze_cfg = dataset_cfg.get("bronze_config")
         if bronze_cfg:
             paths["bronze_target_path"] = _build_adls_uri(adls_base_cfg, env_cfg_base, "container_bronze", "bronze_base_relative_path", bronze_cfg.get("bronze_target_subpath_delta",""))
-            paths["bronze_target_delta_path"] = paths["bronze_target_path"] # Alias para claridad
+            paths["bronze_target_delta_path"] = paths["bronze_target_path"]
             if bronze_cfg.get("autoloader_for_raw_source", False):
                 raw_autoloader_base_rel = env_cfg_base.get('bronze_autoloader_metadata_base_relative_path','_autoloader_metadata/raw_to_bronze')
                 paths["autoloader_raw_schema_location"] = _build_adls_uri(adls_base_cfg, env_cfg_base, autoloader_meta_container, raw_autoloader_base_rel, f"{clean_dataset_name_for_paths}/raw_schema")
                 paths["autoloader_raw_checkpoint_location"] = _build_adls_uri(adls_base_cfg, env_cfg_base, autoloader_meta_container, raw_autoloader_base_rel, f"{clean_dataset_name_for_paths}/raw_checkpoint")
         
-        if dataset_cfg.get("type") == "kafka_stream_to_raw":
+        stream_chkpt_base_rel = env_cfg_base.get('streaming_checkpoints_base_relative_path','_streaming_checkpoints/')
+        # Para Kafka -> Raw (Delta o Avro Files)
+        if dataset_type == "kafka_stream_to_raw_delta":
             paths["raw_target_delta_path"] = _build_adls_uri(adls_base_cfg, env_cfg_base, "container_raw", "raw_base_relative_path", dataset_cfg.get("raw_target_delta_subpath",""))
-            stream_chkpt_base_rel = env_cfg_base.get('streaming_checkpoints_base_relative_path','_streaming_checkpoints/')
-            paths["raw_stream_checkpoint_path"] = _build_adls_uri(adls_base_cfg, env_cfg_base, autoloader_meta_container, stream_chkpt_base_rel, dataset_cfg.get("raw_stream_checkpoint_subpath", f"{clean_dataset_name_for_paths}/kafka_to_raw_checkpoint"))
+            paths["raw_stream_checkpoint_path"] = _build_adls_uri(adls_base_cfg, env_cfg_base, autoloader_meta_container, stream_chkpt_base_rel, dataset_cfg.get("raw_stream_checkpoint_subpath", f"{clean_dataset_name_for_paths}/kafka_to_raw_delta_checkpoint"))
+        elif dataset_type == "kafka_avro_payload_to_raw_avro_files":
+            paths["raw_target_avro_files_path"] = _build_adls_uri(adls_base_cfg, env_cfg_base, "container_raw", "raw_base_relative_path", dataset_cfg.get("raw_target_avro_files_subpath",""))
+            paths["raw_stream_checkpoint_path_avro_files"] = _build_adls_uri(adls_base_cfg, env_cfg_base, autoloader_meta_container, stream_chkpt_base_rel, dataset_cfg.get("raw_stream_checkpoint_subpath", f"{clean_dataset_name_for_paths}/kafka_to_raw_avro_files_checkpoint"))
+        
+        # Checkpoint para Raw -> Bronze Stream
+        if bronze_cfg and bronze_cfg.get("bronze_stream_checkpoint_subpath"):
+            paths["bronze_stream_checkpoint_path"] = _build_adls_uri(adls_base_cfg, env_cfg_base, autoloader_meta_container, stream_chkpt_base_rel, bronze_cfg.get("bronze_stream_checkpoint_subpath"))
 
     elif entorno_actual == "local":
         paths["source_path"] = os.path.join(env_cfg_base["landing_base_path"], dataset_cfg.get("source_subpath",""))
@@ -167,17 +157,27 @@ def construct_full_paths_for_dataset(env_cfg_base, adls_base_cfg, dataset_cfg, d
                 local_autoloader_raw_meta_base = os.path.join(env_cfg_base.get("bronze_base_path","lakehouse/bronze/"), "_autoloader_metadata_raw")
                 paths["autoloader_raw_schema_location"] = os.path.join(local_autoloader_raw_meta_base, clean_dataset_name_for_paths, "schema/")
                 paths["autoloader_raw_checkpoint_location"] = os.path.join(local_autoloader_raw_meta_base, clean_dataset_name_for_paths, "checkpoint/")
-                for key in ["autoloader_raw_schema_location", "autoloader_raw_checkpoint_location"]:
-                    if paths[key] and not paths[key].endswith(os.sep): paths[key] += os.sep
-
-        if dataset_cfg.get("type") == "kafka_stream_to_raw":
+                for key_cs in ["autoloader_raw_schema_location", "autoloader_raw_checkpoint_location"]:
+                    if paths[key_cs] and not paths[key_cs].endswith(os.sep): paths[key_cs] += os.sep
+        
+        local_streaming_chkpt_base = env_cfg_base.get("streaming_checkpoint_base_path", "lakehouse/checkpoints/")
+        if dataset_type == "kafka_stream_to_raw_delta":
             paths["raw_target_delta_path"] = os.path.join(env_cfg_base.get("raw_base_path","lakehouse/raw/"), dataset_cfg.get("raw_target_delta_subpath",""))
-            raw_stream_chkpt_path = os.path.join(env_cfg_base.get("streaming_checkpoint_base_path", "lakehouse/checkpoints/"), dataset_cfg.get("raw_stream_checkpoint_subpath", f"{clean_dataset_name_for_paths}/kafka_to_raw_checkpoint/"))
-            os.makedirs(raw_stream_chkpt_path, exist_ok=True) # Asegurar que exista para local
-            paths["raw_stream_checkpoint_path"] = raw_stream_chkpt_path
+            raw_stream_chkpt_path_val = os.path.join(local_streaming_chkpt_base, dataset_cfg.get("raw_stream_checkpoint_subpath", f"{clean_dataset_name_for_paths}/kafka_to_raw_delta_checkpoint/"))
+            os.makedirs(raw_stream_chkpt_path_val, exist_ok=True)
+            paths["raw_stream_checkpoint_path"] = raw_stream_chkpt_path_val
+        elif dataset_type == "kafka_avro_payload_to_raw_avro_files":
+            paths["raw_target_avro_files_path"] = os.path.join(env_cfg_base.get("raw_base_path","lakehouse/raw/"), dataset_cfg.get("raw_target_avro_files_subpath",""))
+            raw_stream_chkpt_avro_val = os.path.join(local_streaming_chkpt_base, dataset_cfg.get("raw_stream_checkpoint_subpath", f"{clean_dataset_name_for_paths}/kafka_to_raw_avro_files_checkpoint/"))
+            os.makedirs(raw_stream_chkpt_avro_val, exist_ok=True)
+            paths["raw_stream_checkpoint_path_avro_files"] = raw_stream_chkpt_avro_val
+
+        if bronze_cfg and bronze_cfg.get("bronze_stream_checkpoint_subpath"):
+            bronze_stream_chkpt_val = os.path.join(local_streaming_chkpt_base, bronze_cfg.get("bronze_stream_checkpoint_subpath"))
+            os.makedirs(bronze_stream_chkpt_val, exist_ok=True)
+            paths["bronze_stream_checkpoint_path"] = bronze_stream_chkpt_val
             
     return paths
-
 
 def load_app_config(env_type, config_path_override=None):
     config_path = config_path_override or (DATABRICKS_DBFS_CONFIG_PATH if env_type == "databricks" else LOCAL_CONFIG_FILE_PATH)
@@ -185,8 +185,6 @@ def load_app_config(env_type, config_path_override=None):
     if env_type == "databricks" and not config_path.startswith("/dbfs/"):
          if config_path.startswith("dbfs:"):
             effective_path = config_path.replace("dbfs:", "/dbfs", 1)
-         # else: Podrías asumir que es una ruta relativa a /dbfs/FileStore/ o lanzar error si no es /dbfs/ o dbfs:
-
     print(f"UTILS: Cargando configuración desde: {effective_path}")
     try:
         with open(effective_path, 'r') as f: config_data = json.load(f)
@@ -205,10 +203,10 @@ def build_spark_schema_from_config(schema_config_json):
         field_name = fc.get("name")
         field_type_str = fc.get("type","string").lower()
         spark_type = type_mapping.get(field_type_str)
-        if not field_name: continue # Omitir campos sin nombre
-        if not spark_type: spark_type = StringType() # Default a StringType para tipos desconocidos
+        if not field_name: continue 
+        if not spark_type: spark_type = StringType()
         fields.append(StructField(field_name, spark_type, True))
-    return StructType(fields) if fields else None # Devolver None si no se pudieron construir campos
+    return StructType(fields) if fields else None
 
 def prepare_dataframe_for_partitioning(df, partition_cfg):
     if not partition_cfg or not isinstance(partition_cfg, dict): return df, []
@@ -219,21 +217,19 @@ def prepare_dataframe_for_partitioning(df, partition_cfg):
 
     if derive_from_col_name and derive_from_col_name in df.columns:
         source_col_type = df.schema[derive_from_col_name].dataType
-        temp_derived_df = df_with_partitions # DataFrame para aplicar el casteo si es necesario
+        temp_derived_df = df_with_partitions 
         if not isinstance(source_col_type, (TimestampType, DateType)):
             print(f"    INFO (UTILS - Particionamiento): Convirtiendo '{derive_from_col_name}' de {source_col_type} a TimestampType.")
             temp_derived_df = temp_derived_df.withColumn(derive_from_col_name, col(derive_from_col_name).cast(TimestampType()))
         
-        # Usar temp_derived_df (con la columna casteada) para las derivaciones
+        # Reasignar df_with_partitions aquí para que las derivaciones subsecuentes usen el df correcto
+        df_with_partitions = temp_derived_df 
         if "year" in cols_to_partition_by:
-            df_with_partitions = temp_derived_df.withColumn("year", year(col(derive_from_col_name)))
+            df_with_partitions = df_with_partitions.withColumn("year", year(col(derive_from_col_name)))
         if "month" in cols_to_partition_by:
-            # Si 'year' también se derivó, df_with_partitions ya lo tiene. Si no, usa temp_derived_df.
-            current_base_for_month = df_with_partitions if "year" in df_with_partitions.columns and "year" in cols_to_partition_by else temp_derived_df
-            df_with_partitions = current_base_for_month.withColumn("month", month(col(derive_from_col_name)))
+            df_with_partitions = df_with_partitions.withColumn("month", month(col(derive_from_col_name)))
         if "day" in cols_to_partition_by:
-            current_base_for_day = df_with_partitions if "month" in df_with_partitions.columns and "month" in cols_to_partition_by else temp_derived_df
-            df_with_partitions = current_base_for_day.withColumn("day", dayofmonth(col(derive_from_col_name)))
+            df_with_partitions = df_with_partitions.withColumn("day", dayofmonth(col(derive_from_col_name)))
             
     elif derive_from_col_name and derive_from_col_name not in df.columns:
         print(f"ADVERTENCIA (UTILS - Particionamiento): Columna '{derive_from_col_name}' no existe en DataFrame.")
@@ -245,8 +241,8 @@ def prepare_dataframe_for_partitioning(df, partition_cfg):
 
 def get_dbutils():
     global _dbutils_global
-    if _dbutils_global is None: _detectar_entorno() # Forzar detección si no se ha hecho
-    return _dbutils_global if _dbutils_global else None # Devolver None explícitamente si no es Databricks
+    if _dbutils_global is None: _detectar_entorno()
+    return _dbutils_global if _dbutils_global else None
 
 def archive_processed_files(spark, processed_files_df_subset, base_archive_path, entorno_actual):
     dbu = get_dbutils()
