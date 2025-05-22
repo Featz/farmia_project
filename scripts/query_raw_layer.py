@@ -1,7 +1,7 @@
 # scripts/query_raw_layer.py
 import sys
 import os
-import argparse # Para manejar argumentos de línea de comandos
+import argparse 
 import traceback
 
 # --- Añadir el directorio raíz del proyecto a sys.path ---
@@ -14,9 +14,9 @@ if project_root not in sys.path:
 # --- Fin de la configuración de sys.path ---
 
 try:
-    # Asumimos que utils está dentro de tu paquete farmia_engine
     from farmia_engine import utils 
     from pyspark.sql.utils import AnalysisException
+    from pyspark.sql.functions import col # Importar col para validaciones opcionales
 except ImportError as e:
     print(f"Error: No se pudo importar 'farmia_engine.utils'. Asegúrate de que:")
     print(f"1. Estás ejecutando este script desde el directorio raíz del proyecto ('{project_root}').")
@@ -26,22 +26,20 @@ except ImportError as e:
 
 def query_raw_dataset(dataset_name_key: str):
     """
-    Lee, muestra información y valida un dataset Parquet en la capa raw.
+    Lee, muestra información y valida un dataset en la capa raw.
+    Intenta leer Parquet por defecto, pero puede ajustarse si la config indica otro formato.
     Este script está diseñado para ejecución local.
     """
     print(f"\n======================================================================")
     print(f"CONSULTANDO CAPA RAW PARA EL DATASET: {dataset_name_key}")
     print(f"======================================================================")
 
-    entorno_actual = "local" # Forzamos entorno local para este script de consulta
-    spark = None # Inicializar spark a None para el bloque finally
+    entorno_actual = "local" 
+    spark = None 
 
     try:
-        # Obtener SparkSession (utils.py se encarga de configurarla para local)
         spark = utils.get_spark_session(env_type=entorno_actual, app_name=f"QueryRawLayer_{dataset_name_key}")
-        
-        # Cargar configuración general
-        config_general = utils.load_app_config(entorno_actual) # config_path_override es opcional
+        config_general = utils.load_app_config(entorno_actual)
 
         dataset_cfg = config_general.get("dataset_configs", {}).get(dataset_name_key)
         if not dataset_cfg:
@@ -53,42 +51,68 @@ def query_raw_dataset(dataset_name_key: str):
             print(f"ERROR: 'local_env_config' no encontrada en config.json.")
             return
 
-        # Construir la ruta al directorio raw del dataset usando la lógica de utils
-        # Para el entorno local, adls_base_cfg no es necesario para construct_full_paths_for_dataset
         all_paths = utils.construct_full_paths_for_dataset(
             local_env_cfg_base, 
-            None,  # adls_base_cfg
+            None, 
             dataset_cfg, 
             dataset_name_key, 
             entorno_actual
         )
 
-        raw_parquet_path = all_paths.get("raw_target_path")
+        raw_data_path = None
+        dataset_type = dataset_cfg.get("type")
+        # Por defecto, este script consulta Parquet, pero podríamos leer el formato de raw_source_format
+        # de la sección bronze_config si este script fuera más genérico.
+        # Por ahora, nos enfocamos en las rutas Parquet de la capa raw.
+        
+        if dataset_type == "csv": # El output de landing->raw para CSV es Parquet en "raw_target_path"
+            raw_data_path = all_paths.get("raw_target_path")
+            print(f"INFO: El dataset '{dataset_name_key}' (tipo {dataset_type}) se espera en formato Parquet en la capa raw.")
+        elif dataset_type == "kafka_avro_payload_to_raw_parquet_files":
+            raw_data_path = all_paths.get("raw_target_parquet_files_path")
+            print(f"INFO: El dataset '{dataset_name_key}' (tipo {dataset_type}) se espera en formato Parquet en la capa raw.")
+        else:
+            # Intento genérico si el tipo no coincide con los anteriores explícitamente
+            raw_data_path = all_paths.get("raw_target_path") # Común para batch
+            if not raw_data_path: # Fallback para streams que escriben Parquet
+                raw_data_path = all_paths.get("raw_target_parquet_files_path")
+            
+            if raw_data_path:
+                print(f"ADVERTENCIA: Tipo de dataset '{dataset_type}' no manejado explícitamente para la ruta RAW. "
+                      f"Intentando con: {raw_data_path}. Se asumirá formato Parquet.")
+            else:
+                print(f"ERROR: No se pudo determinar la ruta RAW para el dataset '{dataset_name_key}' con tipo '{dataset_type}'.")
+                print(f"       Revisa la config del dataset y las claves de ruta en utils.construct_full_paths_for_dataset.")
+                print(f"       Paths disponibles en all_paths: {all_paths.keys()}")
+                return
 
-        if not raw_parquet_path:
-            print(f"ERROR: No se pudo determinar la ruta 'raw_target_path' para el dataset '{dataset_name_key}'.")
+        if not raw_data_path:
+            print(f"ERROR: La ruta RAW para el dataset '{dataset_name_key}' es None o no está configurada correctamente para su tipo.")
             return
 
-        print(f"\nIntentando leer datos Parquet desde: {raw_parquet_path}\n")
+        print(f"\nIntentando leer datos Parquet desde: {raw_data_path}\n")
 
         try:
-            df = spark.read.parquet(raw_parquet_path)
+            # Este script está enfocado en Parquet, pero podrías adaptarlo para leer otros formatos si fuera necesario
+            df = spark.read.parquet(raw_data_path) 
         except AnalysisException as e:
-            if "Path does not exist" in str(e) or "Unable to infer schema" in str(e):
-                print(f"ERROR: La ruta especificada no existe, está vacía o no contiene archivos Parquet válidos: {raw_parquet_path}")
-                print(f"       Asegúrate de que el proceso 'main_ingest_landing_to_raw.py' se haya ejecutado correctamente para este dataset.")
+            if "Path does not exist" in str(e) or "Unable to infer schema" in str(e) or "is not a Parquet file" in str(e):
+                print(f"ERROR: La ruta especificada no existe, está vacía o no contiene archivos Parquet válidos: {raw_data_path}")
+                print(f"       Asegúrate de que el pipeline correspondiente (ej. landing-to-raw) se haya ejecutado correctamente.")
                 return
             else:
-                print(f"ERROR AL LEER PARQUET: {e}")
+                print(f"ERROR AL LEER PARQUET DESDE RAW: {e}")
                 traceback.print_exc()
                 return
         
         if df.rdd.isEmpty():
-            print(f"INFORMACIÓN: El dataset '{dataset_name_key}' en la capa raw está vacío (0 registros).")
-            print(f"         Ruta consultada: {raw_parquet_path}")
-            df.printSchema() # Aun así, imprimir el esquema si se pudo inferir de un directorio vacío con _common_metadata
+            print(f"INFORMACIÓN: El dataset '{dataset_name_key}' en la capa raw ({raw_data_path}) está VACÍO (0 registros).")
+            try:
+                # Intentar imprimir el esquema incluso si está vacío (Parquet puede tener _common_metadata)
+                print(f"\n--- Esquema del Dataset '{dataset_name_key}' (vacío) en Raw ---")
+                df.printSchema()
+            except: pass # Fallar silenciosamente si no se puede obtener esquema de un DF vacío sin datos
             return
-
 
         print(f"--- Esquema del Dataset '{dataset_name_key}' en Raw ---")
         df.printSchema()
@@ -99,30 +123,14 @@ def query_raw_dataset(dataset_name_key: str):
         record_count = df.count()
         print(f"\n--- Conteo de Registros ---")
         print(f"El dataset '{dataset_name_key}' en la capa raw contiene {record_count} registros.")
-        
-        # Puedes añadir más validaciones aquí según tus necesidades:
-        # Ejemplo: Chequear nulos en columnas que no deberían tenerlos
-        # print("\n--- Chequeo de Nulos (ejemplo para 'order_id') ---")
-        # if "order_id" in df.columns:
-        #     null_counts = df.where(col("order_id").isNull()).count()
-        #     print(f"Registros con 'order_id' nulo: {null_counts}")
-        # else:
-        #     print("Columna 'order_id' no encontrada para chequeo de nulos.")
-
-        # Ejemplo: Resumen estadístico (puede ser verboso)
-        # print("\n--- Resumen Estadístico ---")
-        # df.summary().show()
-
 
     except Exception as e:
         print(f"ERROR GENERAL durante la consulta a la capa raw para '{dataset_name_key}': {e}")
         traceback.print_exc()
     finally:
-        if spark: # Solo intentar detener si la sesión de Spark fue creada
+        if spark:
             print("\nDeteniendo SparkSession de consulta...")
             spark.stop()
-            # Es buena práctica resetear la global en utils si este script es el "dueño" de la sesión
-            # para que otras ejecuciones (o pruebas) puedan crear una nueva si es necesario.
             if hasattr(utils, '_spark_session_global') and utils._spark_session_global is not None:
                  utils._spark_session_global = None 
         print(f"======================================================================")
@@ -132,22 +140,13 @@ def query_raw_dataset(dataset_name_key: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Script para consultar y validar datos Parquet en la capa Raw local.",
-        formatter_class=argparse.RawTextHelpFormatter # Para mejor formato de ayuda
+        formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument(
         "dataset_name", 
         type=str, 
-        help="El nombre clave del dataset a consultar (ej. 'sales_online_csv') tal como está definido en config.json."
+        help="El nombre clave del dataset a consultar (ej. 'sales_online_csv' o 'sensor_telemetry_kafka') tal como está definido en config.json."
     )
-    
-    # Ejemplo de cómo podrías añadir más argumentos en el futuro:
-    # parser.add_argument(
-    #     "-n", "--num_rows", 
-    #     type=int, 
-    #     default=10,
-    #     help="Número de filas a mostrar en la muestra (default: 10)."
-    # )
-
     args = parser.parse_args()
 
     query_raw_dataset(args.dataset_name)
